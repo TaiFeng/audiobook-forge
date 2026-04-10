@@ -48,6 +48,12 @@ def _cmd_forge(args: argparse.Namespace) -> int:
     if args.emotion:
         overrides.setdefault("emotion", {})["enabled"] = True
 
+    # --- WER validation ----------------------------------------------------
+    if args.validate:
+        overrides.setdefault("validation", {})["enabled"] = True
+    if args.whisper_model:
+        overrides.setdefault("validation", {})["whisper_model"] = args.whisper_model
+
     # --- Resume behaviour --------------------------------------------------
     if args.no_resume:
         overrides.setdefault("resume", {})["enabled"] = False
@@ -116,6 +122,98 @@ def _cmd_status(args: argparse.Namespace) -> int:
             )
 
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: validate
+# ---------------------------------------------------------------------------
+
+def _cmd_validate(args: argparse.Namespace) -> int:
+    """Run standalone WER validation on existing chapter audio files."""
+    from audiobook_forge.config import load_config
+    from audiobook_forge.checkpoint import CheckpointManager
+
+    config_path = args.config or "config.yaml"
+    cfg = load_config(config_path)
+    cp = CheckpointManager(cfg.resume.checkpoint_file)
+
+    if not cp.state.chapters:
+        print("No chapters found in checkpoint. Run 'forge' first.", file=sys.stderr)
+        return 1
+
+    # Gather completed chapter audio files and source texts
+    completed_chapters = [
+        ch for ch in cp.state.chapters if ch.get("completed")
+    ]
+    if not completed_chapters:
+        print("No completed chapters to validate.", file=sys.stderr)
+        return 1
+
+    # Read book to get source texts
+    input_path = cp.state.input_file
+    if not input_path or not Path(input_path).exists():
+        if args.input:
+            input_path = args.input
+        else:
+            print(
+                "Cannot find original input file. Provide it with --input.",
+                file=sys.stderr,
+            )
+            return 1
+
+    from audiobook_forge.ingestion.reader import read_book
+    book = read_book(input_path)
+
+    chapter_infos = []
+    chapter_texts = []
+    for ch_data in completed_chapters:
+        audio_file = ch_data.get("audio_file", "")
+        ch_idx = ch_data.get("chapter_index", 0)
+        if audio_file and Path(audio_file).exists() and ch_idx < len(book.chapters):
+            chapter_infos.append({
+                "path": audio_file,
+                "title": ch_data.get("chapter_title", f"Chapter {ch_idx + 1}"),
+            })
+            chapter_texts.append(book.chapters[ch_idx].text)
+
+    if not chapter_infos:
+        print("No chapter audio files found on disk.", file=sys.stderr)
+        return 1
+
+    whisper_model = args.whisper_model or cfg.validation.whisper_model
+    wer_threshold = cfg.validation.wer_threshold
+
+    try:
+        from audiobook_forge.audio.wer_validator import validate_book, format_report
+    except ImportError as exc:
+        print(f"Missing dependency: {exc}\nInstall: pip install faster-whisper jiwer", file=sys.stderr)
+        return 1
+
+    print(f"Validating {len(chapter_infos)} chapters with Whisper {whisper_model}...\n")
+
+    report = validate_book(
+        chapter_audio_files=chapter_infos,
+        chapter_source_texts=chapter_texts,
+        book_title=cp.state.book_title,
+        model_size=whisper_model,
+        device=cfg.validation.device,
+        compute_type=cfg.validation.compute_type,
+        language=cfg.validation.language,
+        wer_threshold=wer_threshold,
+    )
+
+    report_text = format_report(report)
+    print(report_text)
+
+    # Save report
+    report_file = cfg.validation.report_file
+    if report_file:
+        report_path = Path(report_file)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(report_text, encoding="utf-8")
+        print(f"\nReport saved to {report_path}")
+
+    return 0 if report.flagged_chapters == 0 else 1
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +296,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Enable emotion tagging.",
     )
     forge_p.add_argument(
+        "--validate",
+        action="store_true",
+        default=False,
+        help="Run WER validation after generation (requires faster-whisper + jiwer).",
+    )
+    forge_p.add_argument(
+        "--whisper-model",
+        metavar="MODEL",
+        default=None,
+        help="Whisper model for validation: tiny, base, small, medium, large-v3.",
+    )
+    forge_p.add_argument(
         "--no-resume",
         action="store_true",
         default=False,
@@ -226,6 +336,33 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="FILE",
         default="config.yaml",
         help="Path to YAML config file.",
+    )
+
+    # -----------------------------------------------------------------------
+    # validate
+    # -----------------------------------------------------------------------
+    validate_p = sub.add_parser(
+        "validate",
+        help="Run WER validation on existing chapter audio files.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    validate_p.add_argument(
+        "--config", "-c",
+        metavar="FILE",
+        default="config.yaml",
+        help="Path to YAML config file.",
+    )
+    validate_p.add_argument(
+        "--input", "-i",
+        metavar="FILE",
+        default=None,
+        help="Path to original input file (if not in checkpoint).",
+    )
+    validate_p.add_argument(
+        "--whisper-model",
+        metavar="MODEL",
+        default=None,
+        help="Whisper model: tiny, base, small, medium, large-v3 (default: from config).",
     )
 
     # -----------------------------------------------------------------------
@@ -265,9 +402,10 @@ def main() -> None:
         sys.exit(0)
 
     dispatch = {
-        "forge":  _cmd_forge,
-        "status": _cmd_status,
-        "reset":  _cmd_reset,
+        "forge":    _cmd_forge,
+        "status":   _cmd_status,
+        "validate": _cmd_validate,
+        "reset":    _cmd_reset,
     }
 
     handler = dispatch.get(args.command)

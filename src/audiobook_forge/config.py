@@ -88,6 +88,25 @@ class M4BConfig:
 
 
 @dataclass
+class ValidationConfig:
+    enabled: bool = False
+    # Whisper model: tiny, base, small, medium, large-v3, large-v3-turbo
+    whisper_model: str = "base"
+    # Device: auto, cuda, cpu
+    device: str = "auto"
+    # Compute type: auto, float16, int8, int8_float16
+    compute_type: str = "auto"
+    # Language code
+    language: str = "en"
+    # Flag chapters with WER above this threshold (0.0 - 1.0)
+    wer_threshold: float = 0.15
+    # Save validation report to this file (empty = don't save)
+    report_file: str = "./output/wer_report.txt"
+    # Save per-chapter transcripts for review
+    save_transcripts: bool = False
+
+
+@dataclass
 class ResumeConfig:
     enabled: bool = True
     checkpoint_file: str = "./output/.checkpoint.json"
@@ -117,6 +136,7 @@ class ForgeConfig:
     emotion: EmotionConfig = field(default_factory=EmotionConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
     m4b: M4BConfig = field(default_factory=M4BConfig)
+    validation: ValidationConfig = field(default_factory=ValidationConfig)
     resume: ResumeConfig = field(default_factory=ResumeConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
@@ -198,6 +218,7 @@ def load_config(
         emotion=_dict_to_dataclass(EmotionConfig, raw.get("emotion", {})),
         audio=_dict_to_dataclass(AudioConfig, raw.get("audio", {})),
         m4b=_dict_to_dataclass(M4BConfig, raw.get("m4b", {})),
+        validation=_dict_to_dataclass(ValidationConfig, raw.get("validation", {})),
         resume=_dict_to_dataclass(ResumeConfig, raw.get("resume", {})),
         logging=_dict_to_dataclass(LoggingConfig, raw.get("logging", {})),
     )

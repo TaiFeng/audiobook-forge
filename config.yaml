@@ -99,6 +99,24 @@ m4b:
   # Cover image path (optional; will extract from EPUB if available)
   cover_image: ""
 
+# ── WER Validation (optional) ────────────────────────────────
+validation:
+  enabled: false
+  # Whisper model: tiny (~1GB, fast), base (~1GB, good), small (~2GB),
+  #                medium (~5GB), large-v3 (~10GB, best accuracy)
+  whisper_model: "base"
+  # Device: auto (GPU if available), cuda, cpu
+  device: "auto"
+  # Compute type: auto, float16, int8, int8_float16
+  compute_type: "auto"
+  language: "en"
+  # Flag chapters with WER above this threshold
+  wer_threshold: 0.15
+  # Save report to file
+  report_file: "./output/wer_report.txt"
+  # Save per-chapter Whisper transcripts for manual review
+  save_transcripts: false
+
 # ── Logging & Resume ─────────────────────────────────────────
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR

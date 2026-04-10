@@ -15,6 +15,7 @@ hardware.
 - **Conservative emotion system** — dialogue detection, attribution-based mood tagging, optional LLM refinement
 - **Audio post-processing** — loudness normalization (LUFS), silence trimming, resampling
 - **Config-driven** — swap models, voices, and providers via YAML
+- **WER validation** — automatic quality check comparing generated audio against source text using Whisper + jiwer
 
 ---
 
@@ -76,6 +77,9 @@ python -m audiobook_forge forge --input /path/to/book.epub
 # With emotion tagging enabled
 python -m audiobook_forge forge --input book.epub --emotion
 
+# With WER validation after generation
+python -m audiobook_forge forge --input book.epub --validate
+
 # Override engine
 python -m audiobook_forge forge --input book.txt --engine kokoro --voice af_bella
 
@@ -94,6 +98,7 @@ output/
 ├── chapter_0001.wav
 ├── ...
 ├── Your Book Title.m4b   # Final audiobook with chapter markers
+├── wer_report.txt        # Validation report (if --validate)
 └── forge.log             # Processing log
 ```
 
@@ -163,6 +168,100 @@ tts:
     model: tts-1
     voice: alloy
 ```
+
+---
+
+## WER Validation
+
+Automatic quality checking compares generated audio against the source text
+using [faster-whisper](https://github.com/SYSTRAN/faster-whisper) for
+transcription and [jiwer](https://github.com/jitsi/jiwer) for Word Error Rate
+(WER) scoring. Chapters that exceed a configurable threshold are flagged for
+regeneration.
+
+### Setup
+
+```bash
+pip install faster-whisper jiwer
+```
+
+VRAM usage depends on the Whisper model:
+
+| Model     | VRAM    | Relative Speed | Accuracy  |
+| --------- | ------- | -------------- | --------- |
+| tiny      | ~1 GB   | Fastest        | Fair      |
+| base      | ~1 GB   | Fast           | Good      |
+| small     | ~2 GB   | Moderate       | Very good |
+| medium    | ~5 GB   | Slow           | Excellent |
+| large-v3  | ~10 GB  | Slowest        | Best      |
+
+### Usage
+
+Validation can run as part of the pipeline or as a standalone command.
+
+```bash
+# Inline validation during generation
+python -m audiobook_forge forge --input book.epub --validate
+
+# Specify a larger Whisper model for better accuracy
+python -m audiobook_forge forge --input book.epub --validate --whisper-model small
+
+# Standalone validation on previously generated audio
+python -m audiobook_forge validate
+python -m audiobook_forge validate --whisper-model medium
+```
+
+### Configuration
+
+All validation settings live under the `validation:` key in `config.yaml`:
+
+```yaml
+validation:
+  enabled: false              # Enable inline validation during forge
+  whisper_model: "base"       # tiny, base, small, medium, large-v3
+  device: "auto"              # auto (GPU if available), cuda, cpu
+  compute_type: "auto"        # auto, float16, int8, int8_float16
+  language: "en"              # Source language for Whisper
+  wer_threshold: 0.15         # Flag chapters above 15% WER
+  report_file: "./output/wer_report.txt"
+  save_transcripts: false     # Save per-chapter Whisper transcripts
+```
+
+### Report Output
+
+The validation report shows per-chapter WER, CER, and error breakdown:
+
+```
+======================================================================
+  WER Validation Report: Alice's Adventures in Wonderland
+  Whisper model: base
+======================================================================
+
+  Aggregate WER : 8.2%
+  Aggregate CER : 3.1%
+  Total words   : 12,450
+  Total errors  : 1,021
+  Flagged       : 1 / 12 chapters
+
+----------------------------------------------------------------------
+   Ch  Title                                   WER     CER   Words  Flag
+----------------------------------------------------------------------
+    1  Chapter 1: Down the Rabbit-Hole       6.5%   2.8%    1040
+    2  Chapter 2: The Pool of Tears         18.3%  11.2%     980 ***
+   ...
+----------------------------------------------------------------------
+
+  Flagged chapters (consider regenerating):
+    Ch 2: WER 18.3% exceeds threshold 15% (85S/32D/12I)
+
+  Quality: Good — minor errors; acceptable for listening.
+======================================================================
+```
+
+Chapters marked with `***` exceeded the WER threshold. The error breakdown
+shows Substitutions, Deletions, and Insertions to help diagnose whether the
+issue is garbled speech (substitutions), skipped words (deletions), or
+hallucinated content (insertions).
 
 ---
 
@@ -255,6 +354,12 @@ Input (.epub/.txt)
 └──────┬──────┘
        │
        ▼
+┌─────────────┐
+│  Validation  │  (optional) Whisper transcribe → WER scoring
+│  (WER)       │  → per-chapter report → flag low-quality
+└──────┬──────┘
+       │
+       ▼
    Output .m4b
 ```
 
@@ -269,11 +374,12 @@ audiobook-forge/
 ├── samples/
 │   └── alice_chapter1.txt      # Test sample
 ├── tests/
-│   └── test_pipeline.py        # End-to-end test
+│   ├── test_pipeline.py        # End-to-end test
+│   └── test_wer.py             # WER validation unit tests
 └── src/audiobook_forge/
     ├── __init__.py
     ├── __main__.py             # python -m audiobook_forge
-    ├── cli.py                  # CLI (forge, status, reset)
+    ├── cli.py                  # CLI (forge, status, validate, reset)
     ├── config.py               # YAML + .env config loader
     ├── checkpoint.py           # Resumable state manager
     ├── pipeline.py             # Main orchestrator
@@ -293,12 +399,13 @@ audiobook-forge/
     │   └── openai_compat_engine.py  # OpenAI-compatible
     └── audio/
         ├── postprocessor.py    # ffmpeg loudnorm, trim, resample
-        └── m4b_assembler.py    # M4B with chapters + cover
+        ├── m4b_assembler.py    # M4B with chapters + cover
+        └── wer_validator.py    # Whisper + jiwer WER validation
 ```
 
 ---
 
-## Performance Expectations (RTX 4070 Ti, 12 GB)
+## Performance Expectations (RTX 4070 Ti Super, 16 GB)
 
 | Engine           | VRAM    | Speed          | 10-hour book ETA |
 | ---------------- | ------- | -------------- | ---------------- |
@@ -306,14 +413,15 @@ audiobook-forge/
 | Fish Audio S2*   | 9-17 GB | ~3-7x realtime | ~1.5-3.5 hours   |
 | OpenAI-compat    | varies  | API-dependent  | varies           |
 
-*Fish Audio S2 at fp16 may fit in 12 GB; full BF16 requires 24 GB.
+*Fish Audio S2 at fp16 fits comfortably in 16 GB; full BF16 requires 24 GB.
 
 ### Bottlenecks
 
 1. **TTS inference** — dominates total time for all engines
-2. **ffmpeg post-processing** — ~5-10% of total time (CPU-bound)
-3. **M4B assembly** — fast, < 1 minute for most books
-4. **Text processing** — negligible (< 1 second for full novels)
+2. **WER validation** — Whisper transcription adds 5-30 min depending on model size
+3. **ffmpeg post-processing** — ~5-10% of total time (CPU-bound)
+4. **M4B assembly** — fast, < 1 minute for most books
+5. **Text processing** — negligible (< 1 second for full novels)
 
 ---
 
@@ -361,10 +469,9 @@ automatically.
 1. **Web UI** — Gradio-based local interface for browsing output and adjusting settings
 2. **Multi-speaker support** — assign different voices to different characters
 3. **Streaming synthesis** — real-time preview while generating
-4. **Quality validation** — automatic WER check on generated audio
-5. **Batch processing** — process multiple books from a directory
-6. **Fine-tuned voices** — StyleTTS2 integration for custom narrator voices
-7. **Parallel chapter processing** — generate multiple chapters simultaneously
+4. **Batch processing** — process multiple books from a directory
+5. **Fine-tuned voices** — StyleTTS2 integration for custom narrator voices
+6. **Parallel chapter processing** — generate multiple chapters simultaneously
 
 ---
 

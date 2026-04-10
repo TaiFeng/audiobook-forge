@@ -285,8 +285,15 @@ class AudiobookPipeline:
 
         self.checkpoint.mark_m4b_done()
 
-        # --- Step 8: Shutdown + report ------------------------------------
+        # --- Step 8: Shutdown TTS engine -----------------------------------
         engine.shutdown()
+
+        # --- Step 9: WER Validation (optional) ----------------------------
+        validation_report = None
+        if self.config.validation.enabled:
+            validation_report = self._validate_chapters(
+                chapter_infos, book, title
+            )
 
         elapsed = time.monotonic() - pipeline_start
         logger.info(
@@ -429,5 +436,79 @@ class AudiobookPipeline:
         self.checkpoint.mark_chapter_done(ch_idx, str(processed_chapter_audio))
         return processed_chapter_audio
 
+    # ------------------------------------------------------------------
+    # WER Validation
+    # ------------------------------------------------------------------
+
+    def _validate_chapters(
+        self,
+        chapter_infos: list[dict[str, Any]],
+        book: Any,
+        title: str,
+    ) -> Any:
+        """Run WER validation on all generated chapter audio files.
+
+        Transcribes each chapter using Whisper, computes WER against the
+        original source text, and writes a report.
+
+        Returns:
+            :class:`BookValidationReport` or *None* if validation deps missing.
+        """
+        try:
+            from audiobook_forge.audio.wer_validator import (
+                validate_book, format_report,
+            )
+        except Exception as exc:
+            logger.warning("Could not load WER validator: %s", exc)
+            return None
+
+        vcfg = self.config.validation
+        logger.info("Running WER validation (Whisper %s) …", vcfg.whisper_model)
+
+        # Build source texts matching chapter_infos order
+        chapter_source_texts = [ch.text for ch in book.chapters]
+
+        try:
+            report = validate_book(
+                chapter_audio_files=chapter_infos,
+                chapter_source_texts=chapter_source_texts,
+                book_title=title,
+                model_size=vcfg.whisper_model,
+                device=vcfg.device,
+                compute_type=vcfg.compute_type,
+                language=vcfg.language,
+                wer_threshold=vcfg.wer_threshold,
+            )
+        except RuntimeError as exc:
+            logger.warning("WER validation failed: %s", exc)
+            return None
+
+        # Print report
+        report_text = format_report(report)
+        print(report_text)
+        logger.info("\n%s", report_text)
+
+        # Save report file
+        if vcfg.report_file:
+            report_path = Path(vcfg.report_file)
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(report_text, encoding="utf-8")
+            logger.info("WER report saved to %s", report_path)
+
+        # Save per-chapter transcripts if requested
+        if vcfg.save_transcripts:
+            transcript_dir = self.output_dir / "transcripts"
+            transcript_dir.mkdir(parents=True, exist_ok=True)
+            for ch_result in report.chapters:
+                t_path = transcript_dir / f"chapter_{ch_result.chapter_index:04d}_transcript.txt"
+                t_path.write_text(
+                    f"# {ch_result.chapter_title}\n"
+                    f"# WER: {ch_result.wer:.1%} | CER: {ch_result.cer:.1%}\n\n"
+                    f"{ch_result.transcript}\n",
+                    encoding="utf-8",
+                )
+            logger.info("Transcripts saved to %s", transcript_dir)
+
+        return report
 
 

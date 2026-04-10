@@ -33,5 +33,8 @@ mutagen>=1.47
 # ── Emotion LLM (optional) ──────────────────────────────────
 # pip install openai>=1.0
 
+# ── WER Validation (optional) ───────────────────────────────
+# pip install faster-whisper jiwer
+
 # ── NLTK sentence tokenizer (optional, improves segmentation) ──
 # pip install nltk
