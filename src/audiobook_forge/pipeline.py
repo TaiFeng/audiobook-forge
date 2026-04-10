@@ -342,8 +342,26 @@ class AudiobookPipeline:
         # 8d. Emotion tagging (if enabled)
         if cfg.emotion.enabled:
             from audiobook_forge.processing.emotion_tagger import tag_emotions
+            from dataclasses import replace as _dc_replace
+
+            emotion_cfg = cfg.emotion
+
+            # Engines that lack rich prosody controls gain nothing from LLM
+            # refinement — force rules-only mode to avoid wasteful API calls.
+            _RICH_EMOTION_ENGINES = {"fish_audio"}
+            if (
+                emotion_cfg.mode == "llm"
+                and cfg.tts.engine not in _RICH_EMOTION_ENGINES
+            ):
+                logger.info(
+                    "Emotion mode downgraded to 'rules' — %s engine only "
+                    "supports speed-based emotion hints; LLM refinement skipped.",
+                    cfg.tts.engine,
+                )
+                emotion_cfg = _dc_replace(emotion_cfg, mode="rules")
+
             annotated_sentences = tag_emotions(
-                sentences, dialogue_annotations, cfg.emotion, cfg.audio
+                sentences, dialogue_annotations, emotion_cfg, cfg.audio
             )
         else:
             # Build plain AnnotatedSentence list without emotion metadata
