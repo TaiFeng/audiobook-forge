@@ -1,0 +1,110 @@
+# ──────────────────────────────────────────────────────────────
+# Audiobook Forge — Configuration
+# ──────────────────────────────────────────────────────────────
+
+project:
+  name: "My Audiobook"
+  author: ""
+  narrator: ""
+  output_dir: "./output"
+  temp_dir: "./output/.tmp"
+
+# ── Input ────────────────────────────────────────────────────
+input:
+  # Supported: .epub, .txt
+  file: ""
+
+# ── TTS Engine ───────────────────────────────────────────────
+# Options: kokoro, fish_audio, openai_compat
+tts:
+  engine: "kokoro"
+
+  kokoro:
+    # Voice IDs — see https://github.com/hexgrad/kokoro
+    # Good audiobook voices: af_heart, af_bella, af_nicole, af_sarah
+    # Male voices: am_adam, am_michael
+    voice: "af_heart"
+    speed: 1.0
+    lang_code: "a"  # 'a' = American English, 'b' = British English
+
+  fish_audio:
+    # HTTP API endpoint (start server separately)
+    api_url: "http://localhost:8080"
+    # Path to reference audio for voice cloning (10-30s clean audio)
+    reference_audio: ""
+    reference_text: ""
+    # Compile mode for faster inference
+    compile: true
+
+  openai_compat:
+    # Works with LM Studio, vLLM, or cloud OpenAI-compatible APIs
+    api_url: "http://localhost:1234/v1"
+    api_key: ""  # Set in .env for cloud APIs
+    model: "tts-1"
+    voice: "alloy"
+
+# ── Text Processing ──────────────────────────────────────────
+processing:
+  # Max characters per TTS chunk (model-dependent; Kokoro ~500 tokens)
+  max_chunk_chars: 400
+  # Sentence segmenter: "nltk" or "regex"
+  segmenter: "regex"
+  # Normalize numbers to words
+  normalize_numbers: true
+  # Expand common abbreviations
+  expand_abbreviations: true
+
+# ── Emotion / Prosody ────────────────────────────────────────
+emotion:
+  enabled: false
+  # "rules" = heuristic only; "llm" = rules + LLM refinement
+  mode: "rules"
+  # Default narration emotion
+  default_emotion: "neutral"
+  # Intensity ceiling (0.0-1.0) — caps LLM outputs to prevent melodrama
+  max_intensity: 0.7
+  # Minimum sentence length to consider for LLM tagging
+  min_llm_sentence_length: 20
+  # LLM endpoint for emotion refinement (OpenAI-compatible)
+  llm:
+    api_url: "http://localhost:1234/v1"
+    api_key: ""  # Set in .env for cloud
+    model: "local-model"
+    temperature: 0.3
+    # Max sentences per LLM batch request
+    batch_size: 20
+
+# ── Audio Post-Processing ────────────────────────────────────
+audio:
+  # Output sample rate for chapter WAV files
+  sample_rate: 24000
+  # Silence padding between sentences (ms)
+  sentence_pause_ms: 250
+  # Silence padding between paragraphs (ms)
+  paragraph_pause_ms: 500
+  # Normalize audio loudness (LUFS target for audiobooks)
+  normalize_loudness: true
+  loudness_target_lufs: -19.0
+  # Trim leading/trailing silence from chunks
+  trim_silence: true
+
+# ── M4B Assembly ─────────────────────────────────────────────
+m4b:
+  # AAC bitrate (kbps) — 64 is standard for audiobooks
+  bitrate: 64
+  # Output sample rate for final M4B
+  sample_rate: 22050
+  # Mono (recommended for audiobooks)
+  channels: 1
+  # Cover image path (optional; will extract from EPUB if available)
+  cover_image: ""
+
+# ── Logging & Resume ─────────────────────────────────────────
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_file: "./output/forge.log"
+
+resume:
+  enabled: true
+  # Checkpoint file location
+  checkpoint_file: "./output/.checkpoint.json"

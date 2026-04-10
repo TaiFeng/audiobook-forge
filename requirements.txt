@@ -1,0 +1,37 @@
+# ──────────────────────────────────────────────────────────────
+# Audiobook Forge — Dependencies
+# ──────────────────────────────────────────────────────────────
+
+# Core (always required)
+pyyaml>=6.0
+python-dotenv>=1.0
+soundfile>=0.12
+numpy>=1.24
+
+# EPUB parsing
+ebooklib>=0.18
+beautifulsoup4>=4.12
+lxml>=4.9
+
+# Text normalization
+num2words>=0.5.13
+
+# M4B metadata (optional but recommended)
+mutagen>=1.47
+
+# ── TTS Engines (install the one you need) ───────────────────
+
+# Kokoro TTS (recommended default)
+# pip install kokoro>=0.9 soundfile
+
+# Fish Audio S2 (requires separate server setup)
+# pip install requests
+
+# OpenAI-compatible API
+# pip install openai>=1.0
+
+# ── Emotion LLM (optional) ──────────────────────────────────
+# pip install openai>=1.0
+
+# ── NLTK sentence tokenizer (optional, improves segmentation) ──
+# pip install nltk
